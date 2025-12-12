@@ -5,11 +5,16 @@ import {
 } from "../constants";
 import { logAntigravityDebugResponse, type AntigravityDebugContext } from "./debug";
 import {
+  extractThinkingConfig,
   extractUsageFromSsePayload,
   extractUsageMetadata,
+  filterUnsignedThinkingBlocks,
+  isThinkingCapableModel,
   normalizeThinkingConfig,
   parseAntigravityApiBody,
+  resolveThinkingConfig,
   rewriteAntigravityPreviewAccessError,
+  transformThinkingParts,
   type AntigravityApiBody,
 } from "./request-helpers";
 
@@ -23,69 +28,12 @@ function generateSyntheticProjectId(): string {
 }
 
 const STREAM_ACTION = "streamGenerateContent";
-const DEFAULT_THINKING_BUDGET = 16000;
 
 /**
  * Detects requests headed to the Google Generative Language API so we can intercept them.
  */
 export function isGenerativeLanguageRequest(input: RequestInfo): input is string {
   return typeof input === "string" && input.includes("generativelanguage.googleapis.com");
-}
-
-/**
- * Transforms thinking/reasoning content in response parts to OpenCode's expected format.
- * Handles both Gemini-style (thought: true) and Anthropic-style (type: "thinking") formats.
- */
-function transformThinkingParts(response: unknown): unknown {
-  if (!response || typeof response !== "object") {
-    return response;
-  }
-
-  const resp = response as Record<string, unknown>;
-
-  // Handle Anthropic-style content array with type: "thinking"
-  if (Array.isArray(resp.content)) {
-    resp.content = resp.content.map((block: any) => {
-      if (block && typeof block === "object" && block.type === "thinking") {
-        return {
-          type: "reasoning",
-          text: block.thinking || "",
-          ...(block.signature ? { signature: block.signature } : {}),
-        };
-      }
-      return block;
-    });
-  }
-
-  // Handle Gemini-style candidates with parts containing thought: true
-  if (Array.isArray(resp.candidates)) {
-    resp.candidates = resp.candidates.map((candidate: any) => {
-      if (!candidate || typeof candidate !== "object") {
-        return candidate;
-      }
-      const content = candidate.content;
-      if (!content || typeof content !== "object" || !Array.isArray(content.parts)) {
-        return candidate;
-      }
-
-      const thinkingTexts: string[] = [];
-      content.parts = content.parts.map((part: any) => {
-        if (part && typeof part === "object" && part.thought === true) {
-          thinkingTexts.push(part.text || "");
-          return { ...part, type: "reasoning" };
-        }
-        return part;
-      });
-
-      if (thinkingTexts.length > 0) {
-        candidate.reasoning_content = thinkingTexts.join("\n\n");
-      }
-
-      return candidate;
-    });
-  }
-
-  return resp;
 }
 
 /**
@@ -177,46 +125,22 @@ export function prepareAntigravityRequest(
       } else {
         const requestPayload: Record<string, unknown> = { ...parsedBody };
 
-        // Extract thinkingConfig from multiple possible locations
         const rawGenerationConfig = requestPayload.generationConfig as Record<string, unknown> | undefined;
         const extraBody = requestPayload.extra_body as Record<string, unknown> | undefined;
 
-        let sourceThinkingConfig = rawGenerationConfig?.thinkingConfig
-          ?? extraBody?.thinkingConfig
-          ?? requestPayload.thinkingConfig;
-
-        // Convert Anthropic-style "thinking" option
-        const anthropicThinking = extraBody?.thinking ?? requestPayload.thinking;
-        if (!sourceThinkingConfig && anthropicThinking && typeof anthropicThinking === "object") {
-          const thinking = anthropicThinking as Record<string, unknown>;
-          if (thinking.type === "enabled" || thinking.budgetTokens) {
-            sourceThinkingConfig = {
-              includeThoughts: true,
-              thinkingBudget: thinking.budgetTokens ?? DEFAULT_THINKING_BUDGET,
-            };
-          }
-        }
-
-        // Auto-enable thinking for thinking-capable models
-        const isThinkingModel = upstreamModel.toLowerCase().includes("thinking")
-          || upstreamModel.toLowerCase().includes("gemini-3")
-          || upstreamModel.toLowerCase().includes("opus");
-
+        // Resolve thinking configuration based on user settings and model capabilities
+        const userThinkingConfig = extractThinkingConfig(requestPayload, rawGenerationConfig, extraBody);
         const hasAssistantHistory = Array.isArray(requestPayload.contents) &&
           requestPayload.contents.some((c: any) => c?.role === "model" || c?.role === "assistant");
 
-        // Disable thinking for Claude multi-turn to avoid signature issues
-        if (isThinkingModel && !(isClaudeModel && hasAssistantHistory)) {
-          const existingBudget = (sourceThinkingConfig as any)?.thinkingBudget;
-          sourceThinkingConfig = {
-            includeThoughts: true,
-            thinkingBudget: (existingBudget && existingBudget > 0) ? existingBudget : DEFAULT_THINKING_BUDGET,
-          };
-        } else if (isClaudeModel && hasAssistantHistory) {
-          sourceThinkingConfig = { includeThoughts: false, thinkingBudget: 0 };
-        }
+        const finalThinkingConfig = resolveThinkingConfig(
+          userThinkingConfig,
+          isThinkingCapableModel(upstreamModel),
+          isClaudeModel,
+          hasAssistantHistory,
+        );
 
-        const normalizedThinking = normalizeThinkingConfig(sourceThinkingConfig);
+        const normalizedThinking = normalizeThinkingConfig(finalThinkingConfig);
         if (normalizedThinking) {
           if (rawGenerationConfig) {
             rawGenerationConfig.thinkingConfig = normalizedThinking;
@@ -415,28 +339,7 @@ export function prepareAntigravityRequest(
 
         // For Claude models, filter out unsigned thinking blocks (required by Claude API)
         if (isClaudeModel && Array.isArray(requestPayload.contents)) {
-          requestPayload.contents = requestPayload.contents.map((content: any) => {
-            if (!content || !Array.isArray(content.parts)) {
-              return content;
-            }
-
-            const filteredParts = content.parts.filter((part: any) => {
-              if (!part || typeof part !== "object") {
-                return true;
-              }
-              // Remove thinking blocks without signatures
-              if (part.thinking !== undefined || part.type === "thinking" || part.type === "reasoning") {
-                return part.signature || part.thinking?.signature;
-              }
-              // Remove thought parts without thoughtSignature (Gemini format)
-              if (part.thought === true) {
-                return part.thoughtSignature;
-              }
-              return true;
-            });
-
-            return { ...content, parts: filteredParts };
-          });
+          requestPayload.contents = filterUnsignedThinkingBlocks(requestPayload.contents);
         }
 
         // For Claude models, ensure functionCall/tool use parts carry IDs (required by Anthropic).
