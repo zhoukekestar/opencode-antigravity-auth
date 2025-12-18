@@ -120,10 +120,11 @@ function isThinkingPart(part: Record<string, unknown>): boolean {
 /**
  * Removes trailing thinking blocks from a content array.
  * Claude API requires that assistant messages don't end with thinking blocks.
+ * Only removes unsigned thinking blocks; preserves those with valid signatures.
  */
 function removeTrailingThinkingBlocks(contentArray: any[]): any[] {
   const result = [...contentArray];
-  while (result.length > 0 && isThinkingPart(result[result.length - 1])) {
+  while (result.length > 0 && isThinkingPart(result[result.length - 1]) && !hasValidSignature(result[result.length - 1])) {
     result.pop();
   }
   return result;
