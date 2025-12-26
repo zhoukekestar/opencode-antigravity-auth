@@ -81,7 +81,7 @@ function extractMessageIndex(error: unknown): number | null {
 /**
  * Detect the type of recoverable error from an error object.
  */
-function detectErrorType(error: unknown): RecoveryErrorType {
+export function detectErrorType(error: unknown): RecoveryErrorType {
   const message = getErrorMessage(error);
 
   // tool_result_missing: Happens when ESC is pressed during tool execution
@@ -111,7 +111,7 @@ function detectErrorType(error: unknown): RecoveryErrorType {
 /**
  * Check if an error is recoverable.
  */
-function isRecoverableError(error: unknown): boolean {
+export function isRecoverableError(error: unknown): boolean {
   return detectErrorType(error) !== null;
 }
 

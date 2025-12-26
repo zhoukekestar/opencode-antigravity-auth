@@ -1143,6 +1143,26 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   debugLines,
                 );
               } catch (error) {
+                // Handle recoverable thinking errors - strip thinking and return synthetic response
+                if (error instanceof Error && error.message === "THINKING_RECOVERY_NEEDED") {
+                  const recoveryError = error as any;
+                  const originalError = recoveryError.originalError || { error: { message: "Thinking recovery triggered" } };
+                  
+                  // Return a synthetic error response that instructs the user to continue
+                  const recoveryMessage = `${originalError.error?.message || "Session recovered"}\n\n[RECOVERY] Thinking block corruption detected. Please send "continue" to resume.`;
+                  
+                  return new Response(JSON.stringify({
+                    type: "error",
+                    error: {
+                      type: "recoverable_error",
+                      message: recoveryMessage
+                    }
+                  }), {
+                    status: 400,
+                    headers: { "Content-Type": "application/json" }
+                  });
+                }
+
                 if (i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1) {
                   lastError = error instanceof Error ? error : new Error(String(error));
                   continue;
