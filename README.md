@@ -573,12 +573,26 @@ If you encounter error during the session, try chat `continue` the recover sessi
 
 If OAuth fails with "Address already in use" or similar port binding errors:
 
+**macOS / Linux:**
 ```bash
 # Find what's using the OAuth callback port (usually 8080 or dynamic)
-lsof -i :8080
+# Try common ports (8080, 3000, 5000) or omit port for a full list
+lsof -i :8080  # or: lsof -i -P -n | grep LISTEN
 
 # If a stale process is found, terminate it
 kill -9 <PID>
+
+# Retry authentication
+opencode auth login
+```
+
+**Windows (PowerShell / Command Prompt):**
+```powershell
+# Find what's using the port
+netstat -ano | findstr :8080
+
+# Terminate the process (replace <PID> with the actual process ID)
+taskkill /PID <PID> /F
 
 # Retry authentication
 opencode auth login
