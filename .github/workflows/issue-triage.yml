@@ -24,38 +24,20 @@ permissions:
   issues: 'write'
 
 jobs:
-  add-needs-triage:
-    if: github.event_name == 'issues' && github.event.action == 'opened'
-    runs-on: 'ubuntu-latest'
-    steps:
-      - name: 'Add needs-triage label'
-        uses: 'actions/github-script@v7'
-        with:
-          script: |
-            await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              labels: ['needs-triage']
-            });
-
   triage-issue:
-    needs: [add-needs-triage]
     if: |
-      always() && (
-        github.event_name == 'workflow_dispatch' ||
-        github.event_name == 'issues' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'issues' ||
+      (
+        github.event_name == 'issue_comment' &&
+        contains(github.event.comment.body, '/triage') &&
         (
-          github.event_name == 'issue_comment' &&
-          contains(github.event.comment.body, '/triage') &&
-          (
-            github.event.comment.author_association == 'OWNER' ||
-            github.event.comment.author_association == 'MEMBER' ||
-            github.event.comment.author_association == 'COLLABORATOR'
-          )
+          github.event.comment.author_association == 'OWNER' ||
+          github.event.comment.author_association == 'MEMBER' ||
+          github.event.comment.author_association == 'COLLABORATOR'
         )
       )
-    timeout-minutes: 10
+    timeout-minutes: 20
     runs-on: 'ubuntu-latest'
 
     steps:
@@ -118,27 +100,19 @@ jobs:
             
             core.setOutput('list', otherIssues);
 
-      - name: 'Triage with Jules API'
-        id: 'jules_triage'
+      - name: 'Build triage prompt'
+        id: 'build_prompt'
         if: steps.check_labels.outputs.skip != 'true'
-        env:
-          JULES_API_KEY: '${{ secrets.JULES_API_KEY }}'
         run: |
-          RESPONSE=$(curl -s 'https://jules.googleapis.com/v1alpha/chat' \
-            -X POST \
-            -H "Content-Type: application/json" \
-            -H "X-Goog-Api-Key: $JULES_API_KEY" \
-            -d '{
-              "model": "gemini-3-pro",
-              "contents": [{
-                "role": "user",
-                "parts": [{"text": "'"$(cat <<'PROMPT'
+          cat << 'EOF' > triage_prompt.txt
           ## Role
           You are an expert triage assistant AND a master user of opencode-antigravity-auth.
           You know this plugin inside-out: the README, architecture, common issues, and troubleshooting steps.
-          You are extremely helpful and want to solve users' problems quickly.
+          You are extremely helpful and want to solve users problems quickly.
           
-          This is an OpenCode plugin that enables OAuth authentication with Google's Antigravity API to access models like Claude Opus 4.5, Claude Sonnet 4.5, and Gemini 3 Pro.
+          **IMPORTANT: Always respond in English, regardless of the language of the issue.**
+          
+          This is an OpenCode plugin that enables OAuth authentication with Googles Antigravity API to access models like Claude Opus 4.5, Claude Sonnet 4.5, and Gemini 3 Pro.
 
           ## Current Issue to Triage
           Title: ${{ steps.get_issue.outputs.title }}
@@ -157,14 +131,14 @@ jobs:
           - Strips Claude thinking blocks from outgoing requests (fixes signature errors)
           - Recovers interrupted tool sessions with synthetic tool_result blocks
 
-          ### Common issues & solutions
-          1. "403 Forbidden" → OAuth token expired. Solution: Re-run `gemini auth login`
-          2. "429 Too Many Requests" → Rate limited. Solution: Add more accounts or wait
-          3. "Model not found" → Model name incorrect. Check supported models in README
-          4. "Signature validation error" → Fixed by thinking block stripping. Clear session if persists
-          5. "tool_result_missing" → Session interrupted. Plugin auto-recovers, retry if needed
-          6. "antigravity.json not found" → Copy config template from README
-          7. Plugin not loading → Check oh-my-opencode or DCP installation
+          ### Common issues and solutions
+          1. 403 Forbidden - OAuth token expired. Solution: Re-run gemini auth login
+          2. 429 Too Many Requests - Rate limited. Solution: Add more accounts or wait
+          3. Model not found - Model name incorrect. Check supported models in README
+          4. Signature validation error - Fixed by thinking block stripping. Clear session if persists
+          5. tool_result_missing - Session interrupted. Plugin auto-recovers, retry if needed
+          6. antigravity.json not found - Copy config template from README
+          7. Plugin not loading - Check oh-my-opencode or DCP installation
 
           ### Configuration files
           - antigravity.json: Main config (accounts, endpoints)
@@ -189,62 +163,114 @@ jobs:
           1. Select ONE type label
           2. Select ONE area label  
           3. Check if this is a DUPLICATE of another open issue (check the list above!)
-          4. Provide a helpful response if you can solve the issue
+          4. Provide a helpful response IN ENGLISH if you can solve the issue
 
-          ## Output (ONLY valid JSON, no markdown)
-          {
-            "type_label": "bug",
-            "area_label": "area/auth",
-            "duplicate_of": null,
-            "suggested_response": "This looks like an expired OAuth token. Try running `gemini auth login` to refresh your credentials."
-          }
+          ## Output (ONLY valid JSON, no markdown, no code blocks)
+          {"type_label": "bug", "area_label": "area/auth", "duplicate_of": null, "suggested_response": "This looks like an expired OAuth token. Try running gemini auth login to refresh your credentials."}
+          EOF
 
-          If duplicate, set duplicate_of to the issue number:
-          {
-            "type_label": "bug",
-            "area_label": "area/auth",
-            "duplicate_of": 42,
-            "suggested_response": "This appears to be a duplicate of #42. Please check that issue for updates."
-          }
-          PROMPT
-          )"'"}]
-              }]
-            }')
+      - name: 'Triage with Jules API'
+        id: 'jules_triage'
+        if: steps.check_labels.outputs.skip != 'true'
+        continue-on-error: true
+        env:
+          JULES_API_KEY: '${{ secrets.JULES_API_KEY }}'
+        run: |
+          PROMPT=$(cat triage_prompt.txt)
+          ESCAPED_PROMPT=$(echo "$PROMPT" | jq -Rs .)
           
-          echo "Raw response: $RESPONSE"
+          RESPONSE=$(curl -s 'https://jules.googleapis.com/v1alpha/sessions' \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -H "X-Goog-Api-Key: $JULES_API_KEY" \
+            -d "{
+              \"prompt\": $ESCAPED_PROMPT,
+              \"sourceContext\": {
+                \"source\": \"sources/github/${{ github.repository }}\",
+                \"githubRepoContext\": {
+                  \"startingBranch\": \"main\"
+                }
+              },
+              \"requirePlanApproval\": false
+            }")
+          
+          echo "Jules response: $RESPONSE"
+          
+          SESSION_ID=$(echo "$RESPONSE" | jq -r '.id // empty')
+          if [ -z "$SESSION_ID" ]; then
+            ERROR=$(echo "$RESPONSE" | jq -r '.error.message // "Unknown error"')
+            echo "Jules API Error: $ERROR"
+            echo "jules_success=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          
+          echo "Session created: $SESSION_ID"
+          echo "session_id=$SESSION_ID" >> $GITHUB_OUTPUT
+          
+          echo "Waiting for Jules to complete (max 15 minutes)..."
+          for i in {1..90}; do
+            sleep 10
+            STATUS=$(curl -s "https://jules.googleapis.com/v1alpha/sessions/$SESSION_ID" \
+              -H "X-Goog-Api-Key: $JULES_API_KEY")
+            
+            STATE=$(echo "$STATUS" | jq -r '.state // empty')
+            echo "Attempt $i: State = $STATE"
+            
+            if [ "$STATE" = "COMPLETED" ] || [ "$STATE" = "FAILED" ] || [ "$STATE" = "CANCELLED" ]; then
+              echo "Jules finished with state: $STATE"
+              
+              if [ "$STATE" = "COMPLETED" ]; then
+                OUTPUT=$(echo "$STATUS" | jq -r '.outputs[0].text // empty')
+                if [ -n "$OUTPUT" ]; then
+                  echo "result<<EOF" >> $GITHUB_OUTPUT
+                  echo "$OUTPUT" >> $GITHUB_OUTPUT
+                  echo "EOF" >> $GITHUB_OUTPUT
+                  echo "jules_success=true" >> $GITHUB_OUTPUT
+                  exit 0
+                fi
+              fi
+              
+              echo "jules_success=false" >> $GITHUB_OUTPUT
+              exit 0
+            fi
+          done
+          
+          echo "Jules timed out"
+          echo "jules_success=false" >> $GITHUB_OUTPUT
+
+      - name: 'Fallback to Gemini 3 Flash'
+        id: 'gemini_fallback'
+        if: steps.check_labels.outputs.skip != 'true' && steps.jules_triage.outputs.jules_success != 'true'
+        env:
+          GEMINI_API_KEY: '${{ secrets.GEMINI_API_KEY }}'
+        run: |
+          PROMPT=$(cat triage_prompt.txt)
+          ESCAPED_PROMPT=$(echo "$PROMPT" | jq -Rs .)
+          
+          RESPONSE=$(curl -s "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=$GEMINI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"contents\": [{
+                \"parts\": [{\"text\": $ESCAPED_PROMPT}]
+              }],
+              \"generationConfig\": {
+                \"temperature\": 0.1,
+                \"maxOutputTokens\": 1024
+              }
+            }")
+          
+          echo "Gemini response: $RESPONSE"
           
           TEXT=$(echo "$RESPONSE" | jq -r '.candidates[0].content.parts[0].text // empty')
           if [ -z "$TEXT" ]; then
-            echo "Failed to get response from Jules API"
-            echo "result=" >> $GITHUB_OUTPUT
-            exit 0
+            ERROR=$(echo "$RESPONSE" | jq -r '.error.message // "Unknown error"')
+            echo "Gemini API Error: $ERROR"
+            exit 1
           fi
           
           echo "result<<EOF" >> $GITHUB_OUTPUT
           echo "$TEXT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: 'Fallback to Gemini CLI if Jules fails'
-        id: 'gemini_fallback'
-        if: steps.check_labels.outputs.skip != 'true' && steps.jules_triage.outputs.result == ''
-        uses: 'google-github-actions/run-gemini-cli@v0'
-        env:
-          ISSUE_TITLE: '${{ steps.get_issue.outputs.title }}'
-          ISSUE_BODY: '${{ steps.get_issue.outputs.body }}'
-          OTHER_ISSUES: '${{ steps.get_issues.outputs.list }}'
-        with:
-          gemini_api_key: '${{ secrets.GEMINI_API_KEY }}'
-          prompt: |
-            You are a triage assistant for opencode-antigravity-auth plugin.
-            
-            Issue Title: ${{ env.ISSUE_TITLE }}
-            Issue Body: ${{ env.ISSUE_BODY }}
-            
-            Other open issues:
-            ${{ env.OTHER_ISSUES }}
-            
-            Return JSON only:
-            {"type_label": "bug|enhancement|documentation|question|invalid", "area_label": "area/auth|area/models|area/config|area/compat", "duplicate_of": null, "suggested_response": "..."}
 
       - name: 'Apply Labels and Respond'
         if: steps.check_labels.outputs.skip != 'true'
@@ -252,7 +278,7 @@ jobs:
         env:
           ISSUE_NUMBER: '${{ steps.get_issue.outputs.number }}'
           JULES_OUTPUT: '${{ steps.jules_triage.outputs.result }}'
-          GEMINI_OUTPUT: '${{ steps.gemini_fallback.outputs.summary }}'
+          GEMINI_OUTPUT: '${{ steps.gemini_fallback.outputs.result }}'
         with:
           script: |
             const rawOutput = process.env.JULES_OUTPUT || process.env.GEMINI_OUTPUT;
@@ -265,12 +291,17 @@ jobs:
             
             let parsed;
             try {
-              parsed = JSON.parse(rawOutput);
+              parsed = JSON.parse(rawOutput.trim());
             } catch (e) {
               const match = rawOutput.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || 
-                           rawOutput.match(/\{[\s\S]*\}/);
+                           rawOutput.match(/\{[\s\S]*?\}/);
               if (match) {
-                parsed = JSON.parse(match[1] || match[0]);
+                try {
+                  parsed = JSON.parse(match[1] || match[0]);
+                } catch (e2) {
+                  core.setFailed(`Failed to parse output: ${rawOutput}`);
+                  return;
+                }
               } else {
                 core.setFailed(`Failed to parse output: ${rawOutput}`);
                 return;
