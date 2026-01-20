@@ -267,67 +267,10 @@ function injectDebugThinking(response: unknown, debugText: string): unknown {
 
 /**
  * Synthetic thinking placeholder text used when keep_thinking=true but debug mode is off.
- * This ensures Claude multi-turn conversations work correctly by triggering the 
- * SKIP_THOUGHT_SIGNATURE sentinel injection in filterContentArray on the next turn.
+ * Injected via the same path as debug text (injectDebugThinking) to ensure consistent
+ * signature caching and multi-turn handling.
  */
 const SYNTHETIC_THINKING_PLACEHOLDER = "[Thinking preserved]\n";
-
-/**
- * Injects a minimal synthetic thinking block when keep_thinking=true.
- * This is needed for Claude multi-turn because:
- * 1. When the response comes back on next turn, filterContentArray sees the thinking block
- * 2. If it has no valid signature, it injects SKIP_THOUGHT_SIGNATURE sentinel
- * 3. This allows Claude to accept the conversation history without signature validation errors
- */
-function injectSyntheticThinkingForKeepThinking(response: unknown): unknown {
-  if (!response || typeof response !== "object") {
-    return response;
-  }
-
-  const resp = response as any;
-
-  // For Claude responses (resp.content array)
-  if (Array.isArray(resp.content)) {
-    // Check if there's already a thinking block - don't inject duplicate
-    const hasThinking = resp.content.some((block: any) =>
-      block && typeof block === "object" && block.type === "thinking"
-    );
-    if (hasThinking) {
-      return resp;
-    }
-
-    const content = [{ type: "thinking", thinking: SYNTHETIC_THINKING_PLACEHOLDER }, ...resp.content];
-    return { ...resp, content };
-  }
-
-  // For Gemini responses (resp.candidates array)
-  if (Array.isArray(resp.candidates) && resp.candidates.length > 0) {
-    const candidates = resp.candidates.slice();
-    const first = candidates[0];
-
-    if (
-      first &&
-      typeof first === "object" &&
-      first.content &&
-      typeof first.content === "object" &&
-      Array.isArray(first.content.parts)
-    ) {
-      // Check if there's already a thinking part
-      const hasThinking = first.content.parts.some((part: any) =>
-        part && typeof part === "object" && (part.thought === true || part.type === "thinking")
-      );
-      if (hasThinking) {
-        return resp;
-      }
-
-      const parts = [{ thought: true, text: SYNTHETIC_THINKING_PLACEHOLDER }, ...first.content.parts];
-      candidates[0] = { ...first, content: { ...first.content, parts } };
-      return { ...resp, candidates };
-    }
-  }
-
-  return resp;
-}
 
 function stripInjectedDebugFromParts(parts: unknown): unknown {
   if (!Array.isArray(parts)) {
@@ -347,7 +290,8 @@ function stripInjectedDebugFromParts(parts: unknown): unknown {
           ? record.thinking
           : undefined;
 
-    if (text && text.startsWith(DEBUG_MESSAGE_PREFIX)) {
+    // Strip debug blocks and synthetic thinking placeholders
+    if (text && (text.startsWith(DEBUG_MESSAGE_PREFIX) || text.startsWith(SYNTHETIC_THINKING_PLACEHOLDER.trim()))) {
       return false;
     }
 
@@ -1535,10 +1479,16 @@ export async function transformAntigravityResponse(
   const isJsonResponse = contentType.includes("application/json");
   const isEventStreamResponse = contentType.includes("text/event-stream");
 
+  // Generate text for thinking injection:
+  // - If debug=true: inject full debug logs
+  // - If keep_thinking=true (but no debug): inject placeholder to trigger signature caching
+  // Both use the same injection path (injectDebugThinking) for consistent behavior
   const debugText =
     isDebugEnabled() && Array.isArray(debugLines) && debugLines.length > 0
       ? formatDebugLinesForThinking(debugLines)
-      : undefined;
+      : getKeepThinking()
+        ? SYNTHETIC_THINKING_PLACEHOLDER
+        : undefined;
   const cacheSignatures = shouldCacheThinkingSignatures(effectiveModel);
 
   if (!isJsonResponse && !isEventStreamResponse) {
@@ -1563,7 +1513,7 @@ export async function transformAntigravityResponse(
       {
         onCacheSignature: cacheSignature,
         onInjectDebug: injectDebugThinking,
-        onInjectSyntheticThinking: injectSyntheticThinkingForKeepThinking,
+        // onInjectSyntheticThinking removed - keep_thinking now uses debugText path
         transformThinkingParts,
       },
       {
@@ -1571,9 +1521,7 @@ export async function transformAntigravityResponse(
         debugText,
         cacheSignatures,
         displayedThinkingHashes: effectiveModel && isGemini3Model(effectiveModel) ? sessionDisplayedThinkingHashes : undefined,
-        // Inject synthetic thinking when keep_thinking=true but debug is off
-        // This ensures Claude multi-turn works without needing OPENCODE_ANTIGRAVITY_DEBUG=2
-        injectSyntheticThinking: getKeepThinking() && !debugText,
+        // injectSyntheticThinking removed - keep_thinking now unified with debug via debugText
       },
     );
     return new Response(response.body.pipeThrough(streamingTransformer), {
@@ -1698,13 +1646,10 @@ export async function transformAntigravityResponse(
 
     if (effectiveBody?.response !== undefined) {
       let responseBody: unknown = effectiveBody.response;
-      // Inject debug thinking if debug mode is on
+      // Inject thinking text (debug logs or "[Thinking preserved]" placeholder)
+      // Both debug=true and keep_thinking=true use the same path now
       if (debugText) {
         responseBody = injectDebugThinking(responseBody, debugText);
-      }
-      // Inject synthetic thinking if keep_thinking=true but no debug injection
-      else if (getKeepThinking()) {
-        responseBody = injectSyntheticThinkingForKeepThinking(responseBody);
       }
       const transformed = transformThinkingParts(responseBody);
       return new Response(JSON.stringify(transformed), init);

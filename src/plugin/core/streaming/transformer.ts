@@ -212,13 +212,7 @@ export function transformSseLine(
         response = callbacks.onInjectDebug(response, options.debugText);
         debugState.injected = true;
       }
-      
-      // Inject synthetic thinking placeholder when keep_thinking=true but no debug injection
-      // This ensures Claude multi-turn works by triggering SKIP_THOUGHT_SIGNATURE sentinel
-      if (!debugState.injected && options.injectSyntheticThinking && callbacks.onInjectSyntheticThinking) {
-        response = callbacks.onInjectSyntheticThinking(response);
-        debugState.injected = true; // Prevent duplicate injections
-      }
+      // Note: onInjectSyntheticThinking removed - keep_thinking now uses debugText path
 
       const transformed = callbacks.transformThinkingParts
         ? callbacks.transformThinkingParts(response)
