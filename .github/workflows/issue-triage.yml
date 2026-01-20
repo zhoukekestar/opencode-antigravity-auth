@@ -145,6 +145,11 @@ jobs:
             const labelsToAdd = [];
             const labelsToRemove = ['needs-triage'];
             
+            // Remove existing triage labels to prevent conflicts
+            validTypeLabels.forEach(label => labelsToRemove.push(label));
+            validAreaLabels.forEach(label => labelsToRemove.push(label));
+            
+            // Only add one type label and one area label
             if (typeLabel && validTypeLabels.includes(typeLabel)) {
               labelsToAdd.push(typeLabel);
             }
@@ -155,10 +160,27 @@ jobs:
               labelsToAdd.push('duplicate');
             }
             
-            if (labelsToAdd.length === 0) {
-              core.warning('No valid labels found, keeping needs-triage');
-              return;
+            // Validate single label selection and deduplicate
+            const typeLabels = labelsToAdd.filter(label => validTypeLabels.includes(label));
+            const areaLabels = labelsToAdd.filter(label => validAreaLabels.includes(label));
+            const otherLabels = labelsToAdd.filter(label => !validTypeLabels.includes(label) && !validAreaLabels.includes(label));
+            
+            if (typeLabels.length > 1) {
+              core.warning(`Multiple type labels detected: ${typeLabels.join(', ')}. Using only: ${typeLabel}`);
             }
+            if (areaLabels.length > 1) {
+              core.warning(`Multiple area labels detected: ${areaLabels.join(', ')}. Using only: ${areaLabel}`);
+            }
+            
+            // Rebuild labelsToAdd with single type and area labels
+            labelsToAdd = [];
+            if (typeLabel && validTypeLabels.includes(typeLabel)) {
+              labelsToAdd.push(typeLabel);
+            }
+            if (areaLabel && validAreaLabels.includes(areaLabel)) {
+              labelsToAdd.push(areaLabel);
+            }
+            labelsToAdd.push(...otherLabels);
             
             const issueNumber = parseInt(process.env.ISSUE_NUMBER);
             
