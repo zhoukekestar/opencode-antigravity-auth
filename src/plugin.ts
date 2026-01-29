@@ -1066,10 +1066,8 @@ export const createAntigravityPlugin = (providerId: string) => async (
           
           const hasOtherAccountWithAntigravity = (currentAccount: any): boolean => {
             if (family !== "gemini") return false;
-            const otherAccounts = accountManager.getAccounts().filter(acc => acc.index !== currentAccount.index);
-            return otherAccounts.some(acc => 
-              !accountManager.isRateLimitedForHeaderStyle(acc, family, "antigravity", model)
-            );
+            // Use AccountManager method which properly checks for disabled/cooling-down accounts
+            return accountManager.hasOtherAccountWithAntigravityAvailable(currentAccount.index, family, model);
           };
 
           while (true) {
@@ -1390,8 +1388,29 @@ export const createAntigravityPlugin = (providerId: string) => async (
             
             // Check if this header style is rate-limited for this account
             if (accountManager.isRateLimitedForHeaderStyle(account, family, headerStyle, model)) {
-              // Quota fallback: try alternate quota on same account (if enabled and not explicit)
-              if (config.quota_fallback && !explicitQuota && family === "gemini") {
+              // Antigravity-first fallback: exhaust antigravity across ALL accounts before gemini-cli
+              if (config.quota_fallback && !explicitQuota && family === "gemini" && headerStyle === "antigravity") {
+                // Check if ANY other account has antigravity available
+                if (accountManager.hasOtherAccountWithAntigravityAvailable(account.index, family, model)) {
+                  // Switch to another account with antigravity (preserve antigravity priority)
+                  pushDebug(`antigravity rate-limited on account ${account.index}, but available on other accounts. Switching.`);
+                  shouldSwitchAccount = true;
+                } else {
+                  // All accounts exhausted antigravity - fall back to gemini-cli on this account
+                  const alternateStyle = accountManager.getAvailableHeaderStyle(account, family, model);
+                  if (alternateStyle && alternateStyle !== headerStyle) {
+                    await showToast(
+                      `Antigravity quota exhausted on all accounts. Using Gemini CLI quota.`,
+                      "warning"
+                    );
+                    headerStyle = alternateStyle;
+                    pushDebug(`all-accounts antigravity exhausted, quota fallback: ${headerStyle}`);
+                  } else {
+                    shouldSwitchAccount = true;
+                  }
+                }
+              } else if (config.quota_fallback && !explicitQuota && family === "gemini") {
+                // gemini-cli rate-limited - try alternate style (antigravity) on same account
                 const alternateStyle = accountManager.getAvailableHeaderStyle(account, family, model);
                 if (alternateStyle && alternateStyle !== headerStyle) {
                   const quotaName = headerStyle === "gemini-cli" ? "Gemini CLI" : "Antigravity";
