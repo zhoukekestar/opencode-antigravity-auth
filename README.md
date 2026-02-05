@@ -72,7 +72,9 @@ Install the opencode-antigravity-auth plugin and add the Antigravity model defin
    opencode auth login
    ```
 
-3. **Add models** — copy the [full configuration](#models) below
+3. **Add models** — choose one:
+   - Run `opencode auth login` → select **"Configure models in opencode.json"** (auto-configures all models)
+   - Or manually copy the [full configuration](#models) below
 
 4. **Use it:**
 
@@ -240,6 +242,7 @@ opencode auth login  # Run again to add more accounts
 ```
 
 **Account management options (via `opencode auth login`):**
+- **Configure models** — Auto-configure all plugin models in opencode.json
 - **Check quotas** — View remaining API quota for each account
 - **Manage accounts** — Enable/disable specific accounts for rotation
 
