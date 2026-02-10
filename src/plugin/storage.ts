@@ -678,6 +678,7 @@ export async function loadAccounts(): Promise<AccountStorageV4 | null> {
       version: 4,
       accounts: deduplicatedAccounts,
       activeIndex,
+      activeIndexByFamily: storage.activeIndexByFamily,
     };
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
