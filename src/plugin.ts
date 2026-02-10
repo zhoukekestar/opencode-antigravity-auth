@@ -587,6 +587,84 @@ async function promptOpenVerificationUrl(): Promise<boolean> {
   return answer === "" || answer === "y" || answer === "yes";
 }
 
+type VerificationStoredAccount = {
+  enabled?: boolean;
+  verificationRequired?: boolean;
+  verificationRequiredAt?: number;
+  verificationRequiredReason?: string;
+  verificationUrl?: string;
+};
+
+function markStoredAccountVerificationRequired(
+  account: VerificationStoredAccount,
+  reason: string,
+  verifyUrl?: string,
+): boolean {
+  let changed = false;
+
+  if (account.verificationRequired !== true) {
+    account.verificationRequired = true;
+    changed = true;
+  }
+
+  const timestamp = Date.now();
+  if (account.verificationRequiredAt !== timestamp) {
+    account.verificationRequiredAt = timestamp;
+    changed = true;
+  }
+
+  const normalizedReason = reason.trim();
+  if (account.verificationRequiredReason !== normalizedReason) {
+    account.verificationRequiredReason = normalizedReason;
+    changed = true;
+  }
+
+  const normalizedUrl = verifyUrl?.trim();
+  if (normalizedUrl && account.verificationUrl !== normalizedUrl) {
+    account.verificationUrl = normalizedUrl;
+    changed = true;
+  }
+
+  if (account.enabled !== false) {
+    account.enabled = false;
+    changed = true;
+  }
+
+  return changed;
+}
+
+function clearStoredAccountVerificationRequired(
+  account: VerificationStoredAccount,
+  enableIfRequired = false,
+): { changed: boolean; wasVerificationRequired: boolean } {
+  const wasVerificationRequired = account.verificationRequired === true;
+  let changed = false;
+
+  if (account.verificationRequired !== false) {
+    account.verificationRequired = false;
+    changed = true;
+  }
+  if (account.verificationRequiredAt !== undefined) {
+    account.verificationRequiredAt = undefined;
+    changed = true;
+  }
+  if (account.verificationRequiredReason !== undefined) {
+    account.verificationRequiredReason = undefined;
+    changed = true;
+  }
+  if (account.verificationUrl !== undefined) {
+    account.verificationUrl = undefined;
+    changed = true;
+  }
+
+  if (enableIfRequired && wasVerificationRequired && account.enabled === false) {
+    account.enabled = true;
+    changed = true;
+  }
+
+  return { changed, wasVerificationRequired };
+}
+
 async function promptOAuthCallbackValue(message: string): Promise<string> {
   const { createInterface } = await import("node:readline/promises");
   const { stdin, stdout } = await import("node:process");
@@ -2173,6 +2251,48 @@ export const createAntigravityPlugin = (providerId: string) => async (
                 resetRateLimitState(account.index, quotaKey);
                 resetAccountFailureState(account.index);
 
+                if (response.status === 403) {
+                  const errorBodyText = await response.clone().text().catch(() => "");
+                  const extracted = extractVerificationErrorDetails(errorBodyText);
+
+                  if (extracted.validationRequired) {
+                    const verificationReason = extracted.message ?? "Google requires account verification.";
+                    const cooldownMs = 10 * 60 * 1000;
+
+                    accountManager.markAccountVerificationRequired(account.index, verificationReason, extracted.verifyUrl);
+                    accountManager.markAccountCoolingDown(account, cooldownMs, "validation-required");
+                    accountManager.markRateLimited(account, cooldownMs, family, headerStyle, model);
+
+                    const label = account.email || `Account ${account.index + 1}`;
+                    if (accountManager.shouldShowAccountToast(account.index, 60000)) {
+                      await showToast(
+                        `⚠ ${label} needs verification. Run 'opencode auth login' and use Verify accounts.`,
+                        "warning",
+                      );
+                      accountManager.markToastShown(account.index);
+                    }
+
+                    pushDebug(`verification-required: disabled account ${account.index}`);
+                    getHealthTracker().recordFailure(account.index);
+
+                    lastFailure = {
+                      response,
+                      streaming: prepared.streaming,
+                      debugContext,
+                      requestedModel: prepared.requestedModel,
+                      projectId: prepared.projectId,
+                      endpoint: prepared.endpoint,
+                      effectiveModel: prepared.effectiveModel,
+                      sessionId: prepared.sessionId,
+                      toolDebugMissing: prepared.toolDebugMissing,
+                      toolDebugSummary: prepared.toolDebugSummary,
+                      toolDebugPayload: prepared.toolDebugPayload,
+                    };
+                    shouldSwitchAccount = true;
+                    break;
+                  }
+                }
+
                 const shouldRetryEndpoint = (
                   response.status === 403 ||
                   response.status === 404 ||
@@ -2439,24 +2559,28 @@ export const createAntigravityPlugin = (providerId: string) => async (
               while (true) {
                 const now = Date.now();
                 const existingAccounts = existingStorage.accounts.map((acc, idx) => {
-                  let status: 'active' | 'rate-limited' | 'expired' | 'unknown' = 'unknown';
-                  
-                  const rateLimits = acc.rateLimitResetTimes;
-                  if (rateLimits) {
-                    const isRateLimited = Object.values(rateLimits).some(
-                      (resetTime) => typeof resetTime === 'number' && resetTime > now
-                    );
-                    if (isRateLimited) {
-                      status = 'rate-limited';
+                  let status: 'active' | 'rate-limited' | 'expired' | 'verification-required' | 'unknown' = 'unknown';
+
+                  if (acc.verificationRequired) {
+                    status = 'verification-required';
+                  } else {
+                    const rateLimits = acc.rateLimitResetTimes;
+                    if (rateLimits) {
+                      const isRateLimited = Object.values(rateLimits).some(
+                        (resetTime) => typeof resetTime === 'number' && resetTime > now
+                      );
+                      if (isRateLimited) {
+                        status = 'rate-limited';
+                      } else {
+                        status = 'active';
+                      }
                     } else {
                       status = 'active';
                     }
-                  } else {
-                    status = 'active';
-                  }
 
-                  if (acc.coolingDownUntil && acc.coolingDownUntil > now) {
-                    status = 'rate-limited';
+                    if (acc.coolingDownUntil && acc.coolingDownUntil > now) {
+                      status = 'rate-limited';
+                    }
                   }
 
                   return {
@@ -2631,6 +2755,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                     let okCount = 0;
                     let blockedCount = 0;
                     let errorCount = 0;
+                    let storageUpdated = false;
 
                     const blockedResults: Array<{ label: string; message: string; verifyUrl?: string }> = [];
 
@@ -2643,24 +2768,44 @@ export const createAntigravityPlugin = (providerId: string) => async (
 
                       const verification = await verifyAccountAccess(account, client, providerId);
                       if (verification.status === "ok") {
+                        const { changed, wasVerificationRequired } = clearStoredAccountVerificationRequired(account, true);
+                        if (changed) {
+                          storageUpdated = true;
+                        }
+                        activeAccountManager?.clearAccountVerificationRequired(i, wasVerificationRequired);
                         okCount += 1;
                         console.log("ok");
                         continue;
                       }
 
                       if (verification.status === "blocked") {
+                        const changed = markStoredAccountVerificationRequired(
+                          account,
+                          verification.message,
+                          verification.verifyUrl,
+                        );
+                        if (changed) {
+                          storageUpdated = true;
+                        }
+                        activeAccountManager?.markAccountVerificationRequired(i, verification.message, verification.verifyUrl);
+
                         blockedCount += 1;
                         console.log("needs verification");
+                        const verifyUrl = verification.verifyUrl ?? account.verificationUrl;
                         blockedResults.push({
                           label,
                           message: verification.message,
-                          verifyUrl: verification.verifyUrl,
+                          verifyUrl,
                         });
                         continue;
                       }
 
                       errorCount += 1;
                       console.log(`error (${verification.message})`);
+                    }
+
+                    if (storageUpdated) {
+                      await saveAccounts(existingStorage);
                     }
 
                     console.log(`\nVerification summary: ${okCount} ready, ${blockedCount} need verification, ${errorCount} errors.`);
@@ -2706,19 +2851,45 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   const verification = await verifyAccountAccess(account, client, providerId);
 
                   if (verification.status === "ok") {
-                    console.log(`✓ ${label} is ready for requests.\n`);
+                    const { changed, wasVerificationRequired } = clearStoredAccountVerificationRequired(account, true);
+                    if (changed) {
+                      await saveAccounts(existingStorage);
+                    }
+                    activeAccountManager?.clearAccountVerificationRequired(verifyAccountIndex, wasVerificationRequired);
+
+                    if (wasVerificationRequired) {
+                      console.log(`✓ ${label} is ready for requests and has been re-enabled.\n`);
+                    } else {
+                      console.log(`✓ ${label} is ready for requests.\n`);
+                    }
                     continue;
                   }
 
                   if (verification.status === "blocked") {
+                    const changed = markStoredAccountVerificationRequired(
+                      account,
+                      verification.message,
+                      verification.verifyUrl,
+                    );
+                    if (changed) {
+                      await saveAccounts(existingStorage);
+                    }
+                    activeAccountManager?.markAccountVerificationRequired(
+                      verifyAccountIndex,
+                      verification.message,
+                      verification.verifyUrl,
+                    );
+
+                    const verifyUrl = verification.verifyUrl ?? account.verificationUrl;
                     console.log(`⚠ ${label} needs Google verification before it can be used.`);
                     if (verification.message) {
                       console.log(verification.message);
                     }
-                    if (verification.verifyUrl) {
-                      console.log(`\nVerification URL:\n${verification.verifyUrl}\n`);
+                    console.log(`${label} has been disabled until verification is completed.`);
+                    if (verifyUrl) {
+                      console.log(`\nVerification URL:\n${verifyUrl}\n`);
                       if (await promptOpenVerificationUrl()) {
-                        const opened = await openBrowser(verification.verifyUrl);
+                        const opened = await openBrowser(verifyUrl);
                         if (opened) {
                           console.log("Opened verification URL in your browser.\n");
                         } else {
