@@ -7,6 +7,7 @@ import {
 import { formatRefreshParts, parseRefreshParts } from "./auth";
 import { createLogger } from "./logger";
 import type { OAuthAuthDetails, ProjectContextResult } from "./types";
+import proxyFetch from '../fetch'
 
 const log = createLogger("project");
 
@@ -139,7 +140,7 @@ export async function loadManagedProject(
 
   for (const baseEndpoint of loadEndpoints) {
     try {
-      const response = await fetch(
+      const response = await proxyFetch(
         `${baseEndpoint}/v1internal:loadCodeAssist`,
         {
           method: "POST",
@@ -182,7 +183,7 @@ export async function onboardManagedProject(
   for (const baseEndpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        const response = await fetch(
+        const response = await proxyFetch(
           `${baseEndpoint}/v1internal:onboardUser`,
           {
             method: "POST",

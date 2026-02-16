@@ -10,6 +10,7 @@ import { refreshAccessToken } from "./token";
 import { getModelFamily } from "./transform/model-resolver";
 import type { PluginClient, OAuthAuthDetails } from "./types";
 import type { AccountMetadataV3 } from "./storage";
+import proxyFetch from '../fetch'
 
 const FETCH_TIMEOUT_MS = 10000;
 
@@ -176,7 +177,7 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = F
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await proxyFetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }

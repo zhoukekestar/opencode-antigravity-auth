@@ -11,6 +11,7 @@ import {
   USER_OPENCODE_CONFIG_JSONC,
 } from "./constants";
 import { debugLogToFile } from "../../plugin/debug";
+import proxyFetch from '../../fetch'
 
 function debugLog(message: string): void {
   debugLogToFile(message);
@@ -219,7 +220,7 @@ export async function getLatestVersion(): Promise<string | null> {
   const timeoutId = setTimeout(() => controller.abort(), NPM_FETCH_TIMEOUT);
 
   try {
-    const response = await fetch(NPM_REGISTRY_URL, {
+    const response = await proxyFetch(NPM_REGISTRY_URL, {
       signal: controller.signal,
       headers: { Accept: "application/json" },
     });

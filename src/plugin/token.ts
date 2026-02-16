@@ -4,6 +4,7 @@ import { clearCachedAuth, storeCachedAuth } from "./cache";
 import { createLogger } from "./logger";
 import { invalidateProjectContextCache } from "./project";
 import type { OAuthAuthDetails, PluginClient, RefreshParts } from "./types";
+import proxyFetch from '../fetch'
 
 const log = createLogger("token");
 
@@ -94,7 +95,7 @@ export async function refreshAccessToken(
 
   try {
     const startTime = Date.now();
-    const response = await fetch("https://oauth2.googleapis.com/token", {
+    const response = await proxyFetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",

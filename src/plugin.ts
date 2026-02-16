@@ -1,5 +1,6 @@
 import { exec } from "node:child_process";
 import { tool } from "@opencode-ai/plugin";
+import proxyFetch from './fetch'
 import {
   ANTIGRAVITY_DEFAULT_PROJECT_ID,
   ANTIGRAVITY_ENDPOINT_FALLBACKS,
@@ -505,7 +506,7 @@ async function verifyAccountAccess(
 
   let response: Response;
   try {
-    response = await fetch(`${ANTIGRAVITY_ENDPOINT_PROD}/v1internal:streamGenerateContent?alt=sse`, {
+    response = await proxyFetch(`${ANTIGRAVITY_ENDPOINT_PROD}/v1internal:streamGenerateContent?alt=sse`, {
       method: "POST",
       headers,
       body: JSON.stringify(requestBody),
@@ -1453,12 +1454,12 @@ export const createAntigravityPlugin = (providerId: string) => async (
         apiKey: "",
         async fetch(input, init) {
           if (!isGenerativeLanguageRequest(input)) {
-            return fetch(input, init);
+            return proxyFetch(input, init);
           }
 
           const latestAuth = await getAuth();
           if (!isOAuthAuth(latestAuth)) {
-            return fetch(input, init);
+            return proxyFetch(input, init);
           }
 
           if (accountManager.getAccountCount() === 0) {
@@ -1847,7 +1848,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
 
               try {
                 pushDebug("thinking-warmup: start");
-                const warmupResponse = await fetch(warmupUrl, warmupInit);
+                const warmupResponse = await proxyFetch(warmupUrl, warmupInit);
                 const transformed = await transformAntigravityResponse(
                   warmupResponse,
                   true,
@@ -2007,7 +2008,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   tokenConsumed = getTokenTracker().consume(account.index);
                 }
 
-                const response = await fetch(prepared.request, prepared.init);
+                const response = await proxyFetch(prepared.request, prepared.init);
                 pushDebug(`status=${response.status} ${response.statusText}`);
 
 

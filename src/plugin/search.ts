@@ -14,6 +14,7 @@ import {
   SEARCH_SYSTEM_INSTRUCTION,
 } from "../constants";
 import { createLogger } from "./logger";
+import proxyFetch from '../fetch'
 
 const log = createLogger("search");
 
@@ -281,7 +282,7 @@ export async function executeSearch(
   });
 
   try {
-    const response = await fetch(url, {
+    const response = await proxyFetch(url, {
       method: "POST",
       headers: {
         ...getAntigravityHeaders(),

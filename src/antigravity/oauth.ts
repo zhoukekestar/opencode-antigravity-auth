@@ -12,6 +12,7 @@ import {
 } from "../constants";
 import { createLogger } from "../plugin/logger";
 import { calculateTokenExpiry } from "../plugin/auth";
+import proxyFetch from '../fetch'
 
 const log = createLogger("oauth");
 
@@ -123,7 +124,7 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    return await proxyFetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
   }
@@ -206,7 +207,7 @@ export async function exchangeAntigravity(
     const { verifier, projectId } = decodeState(state);
 
     const startTime = Date.now();
-    const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+    const tokenResponse = await proxyFetch("https://oauth2.googleapis.com/token", {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
@@ -231,7 +232,7 @@ export async function exchangeAntigravity(
 
     const tokenPayload = (await tokenResponse.json()) as AntigravityTokenResponse;
 
-    const userInfoResponse = await fetch(
+    const userInfoResponse = await proxyFetch(
       "https://www.googleapis.com/oauth2/v1/userinfo?alt=json",
       {
         headers: {
