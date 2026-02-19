@@ -34,6 +34,13 @@ describe("resolveModelWithTier", () => {
       // All Gemini models now default to antigravity
       expect(result.quotaPreference).toBe("antigravity");
     });
+
+    it("gemini-3.1-pro-preview gets default thinkingLevel 'low' with antigravity quota", () => {
+      const result = resolveModelWithTier("gemini-3.1-pro-preview");
+      expect(result.actualModel).toBe("gemini-3.1-pro-preview");
+      expect(result.thinkingLevel).toBe("low");
+      expect(result.quotaPreference).toBe("antigravity");
+    });
   });
 
   describe("All Gemini models default to antigravity quota", () => {
@@ -102,6 +109,12 @@ describe("resolveModelWithTier", () => {
       const result = resolveModelWithTier("antigravity-gemini-3-flash-medium");
       expect(result.actualModel).toBe("gemini-3-flash");
       expect(result.thinkingLevel).toBe("medium");
+    });
+
+    it("antigravity-gemini-3.1-pro gets default -low model", () => {
+      const result = resolveModelWithTier("antigravity-gemini-3.1-pro");
+      expect(result.actualModel).toBe("gemini-3.1-pro-low");
+      expect(result.thinkingLevel).toBe("low");
     });
   });
 
@@ -259,6 +272,18 @@ describe("Issue #103: resolveModelForHeaderStyle", () => {
       expect(result.actualModel).toBe("gemini-3-pro-low");
       expect(result.quotaPreference).toBe("antigravity");
     });
+
+    it("transforms gemini-3.1-pro-preview to gemini-3.1-pro-low for antigravity", () => {
+      const result = resolveModelForHeaderStyle("gemini-3.1-pro-preview", "antigravity");
+      expect(result.actualModel).toBe("gemini-3.1-pro-low");
+      expect(result.quotaPreference).toBe("antigravity");
+    });
+
+    it("transforms gemini-3.1-pro-preview-customtools to gemini-3.1-pro-low for antigravity", () => {
+      const result = resolveModelForHeaderStyle("gemini-3.1-pro-preview-customtools", "antigravity");
+      expect(result.actualModel).toBe("gemini-3.1-pro-low");
+      expect(result.quotaPreference).toBe("antigravity");
+    });
   });
 
   describe("quota fallback from antigravity to gemini-cli", () => {
@@ -271,6 +296,18 @@ describe("Issue #103: resolveModelForHeaderStyle", () => {
     it("transforms gemini-3-pro-low to gemini-3-pro-preview for gemini-cli", () => {
       const result = resolveModelForHeaderStyle("gemini-3-pro-low", "gemini-cli");
       expect(result.actualModel).toBe("gemini-3-pro-preview");
+      expect(result.quotaPreference).toBe("gemini-cli");
+    });
+
+    it("transforms gemini-3.1-pro-low to gemini-3.1-pro-preview for gemini-cli", () => {
+      const result = resolveModelForHeaderStyle("gemini-3.1-pro-low", "gemini-cli");
+      expect(result.actualModel).toBe("gemini-3.1-pro-preview");
+      expect(result.quotaPreference).toBe("gemini-cli");
+    });
+
+    it("keeps gemini-3.1-pro-preview-customtools unchanged for gemini-cli", () => {
+      const result = resolveModelForHeaderStyle("gemini-3.1-pro-preview-customtools", "gemini-cli");
+      expect(result.actualModel).toBe("gemini-3.1-pro-preview-customtools");
       expect(result.quotaPreference).toBe("gemini-cli");
     });
   });
@@ -289,5 +326,3 @@ describe("Issue #103: resolveModelForHeaderStyle", () => {
     });
   });
 });
-
-
