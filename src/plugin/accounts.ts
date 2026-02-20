@@ -7,6 +7,7 @@ import { generateFingerprint, updateFingerprintVersion, type Fingerprint, type F
 import type { QuotaGroup, QuotaGroupSummary } from "./quota";
 import { getModelFamily } from "./transform/model-resolver";
 import { debugLogToFile } from "./debug";
+import { formatAccountLabel } from "./logging-utils";
 
 
 export type { ModelFamily, HeaderStyle, CooldownReason } from "./storage";
@@ -266,11 +267,10 @@ function isOverSoftQuotaThreshold(
   const isOverThreshold = usedPercent >= thresholdPercent;
   
   if (isOverThreshold) {
-    const accountLabel = account.email || `Account ${account.index + 1}`;
-    debugLogToFile(
-      `[SoftQuota] Skipping ${accountLabel}: ${quotaGroup} usage ${usedPercent.toFixed(1)}% >= threshold ${thresholdPercent}%` +
-      (groupData.resetTime ? ` (resets: ${groupData.resetTime})` : '')
-    );
+    const accountLabel = formatAccountLabel(account.email, account.index);
+    const resetSuffix = groupData.resetTime ? ` (resets: ${groupData.resetTime})` : "";
+    const message = `[SoftQuota] Skipping ${accountLabel}: ${quotaGroup} usage ${usedPercent.toFixed(1)}% >= threshold ${thresholdPercent}%${resetSuffix}`;
+    debugLogToFile(message);
   }
   
   return isOverThreshold;

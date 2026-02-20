@@ -1974,6 +1974,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   forceThinkingRecovery,
                   {
                     claudeToolHardening: config.claude_tool_hardening,
+                    claudePromptAutoCaching: config.claude_prompt_auto_caching,
                     fingerprint: account.fingerprint,
                   },
                 );
@@ -1990,6 +1991,20 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   body: prepared.init.body,
                   streaming: prepared.streaming,
                   projectId: projectContext.effectiveProjectId,
+                });
+
+                const createFailureContext = (failureResponse: Response): FailureContext => ({
+                  response: failureResponse,
+                  streaming: prepared.streaming,
+                  debugContext,
+                  requestedModel: prepared.requestedModel,
+                  projectId: prepared.projectId,
+                  endpoint: prepared.endpoint,
+                  effectiveModel: prepared.effectiveModel,
+                  sessionId: prepared.sessionId,
+                  toolDebugMissing: prepared.toolDebugMissing,
+                  toolDebugSummary: prepared.toolDebugSummary,
+                  toolDebugPayload: prepared.toolDebugPayload,
                 });
 
                 await runThinkingWarmup(prepared, projectContext.effectiveProjectId);
@@ -2209,46 +2224,17 @@ export const createAntigravityPlugin = (providerId: string) => async (
                       : ``;
                     await showToast(`Rate limited again. Switching account in 5s...${quotaMsg}`, "warning");
                     await sleep(SWITCH_ACCOUNT_DELAY_MS, abortSignal);
-                    
-                    lastFailure = {
-                      response,
-                      streaming: prepared.streaming,
-                      debugContext,
-                      requestedModel: prepared.requestedModel,
-                      projectId: prepared.projectId,
-                      endpoint: prepared.endpoint,
-                      effectiveModel: prepared.effectiveModel,
-                      sessionId: prepared.sessionId,
-                      toolDebugMissing: prepared.toolDebugMissing,
-                      toolDebugSummary: prepared.toolDebugSummary,
-                      toolDebugPayload: prepared.toolDebugPayload,
-                    };
-                    shouldSwitchAccount = true;
-                    break;
                   } else {
                     // Single account: exponential backoff (1s, 2s, 4s, 8s... max 60s)
                     const expBackoffMs = Math.min(FIRST_RETRY_DELAY_MS * Math.pow(2, attempt - 1), 60000);
                     const expBackoffFormatted = expBackoffMs >= 1000 ? `${Math.round(expBackoffMs / 1000)}s` : `${expBackoffMs}ms`;
                     await showToast(`Rate limited. Retrying in ${expBackoffFormatted} (attempt ${attempt})...`, "warning");
-                    
-                    lastFailure = {
-                      response,
-                      streaming: prepared.streaming,
-                      debugContext,
-                      requestedModel: prepared.requestedModel,
-                      projectId: prepared.projectId,
-                      endpoint: prepared.endpoint,
-                      effectiveModel: prepared.effectiveModel,
-                      sessionId: prepared.sessionId,
-                      toolDebugMissing: prepared.toolDebugMissing,
-                      toolDebugSummary: prepared.toolDebugSummary,
-                      toolDebugPayload: prepared.toolDebugPayload,
-                    };
-                    
                     await sleep(expBackoffMs, abortSignal);
-                    shouldSwitchAccount = true;
-                    break;
                   }
+
+                  lastFailure = createFailureContext(response);
+                  shouldSwitchAccount = true;
+                  break;
                 }
 
                 // Success - reset rate limit backoff state for this quota
@@ -2280,19 +2266,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
                     pushDebug(`verification-required: disabled account ${account.index}`);
                     getHealthTracker().recordFailure(account.index);
 
-                    lastFailure = {
-                      response,
-                      streaming: prepared.streaming,
-                      debugContext,
-                      requestedModel: prepared.requestedModel,
-                      projectId: prepared.projectId,
-                      endpoint: prepared.endpoint,
-                      effectiveModel: prepared.effectiveModel,
-                      sessionId: prepared.sessionId,
-                      toolDebugMissing: prepared.toolDebugMissing,
-                      toolDebugSummary: prepared.toolDebugSummary,
-                      toolDebugPayload: prepared.toolDebugPayload,
-                    };
+                    lastFailure = createFailureContext(response);
                     shouldSwitchAccount = true;
                     break;
                   }
@@ -2304,24 +2278,9 @@ export const createAntigravityPlugin = (providerId: string) => async (
                   response.status >= 500
                 );
 
-                if (shouldRetryEndpoint) {
-                  await logResponseBody(debugContext, response, response.status);
-                }
-
                 if (shouldRetryEndpoint && i < ANTIGRAVITY_ENDPOINT_FALLBACKS.length - 1) {
-                  lastFailure = {
-                    response,
-                    streaming: prepared.streaming,
-                    debugContext,
-                    requestedModel: prepared.requestedModel,
-                    projectId: prepared.projectId,
-                    endpoint: prepared.endpoint,
-                    effectiveModel: prepared.effectiveModel,
-                    sessionId: prepared.sessionId,
-                    toolDebugMissing: prepared.toolDebugMissing,
-                    toolDebugSummary: prepared.toolDebugSummary,
-                    toolDebugPayload: prepared.toolDebugPayload,
-                  };
+                  await logResponseBody(debugContext, response, response.status);
+                  lastFailure = createFailureContext(response);
                   continue;
                 }
 
@@ -2342,6 +2301,9 @@ export const createAntigravityPlugin = (providerId: string) => async (
                 logAntigravityDebugResponse(debugContext, response, {
                   note: response.ok ? "Success" : `Error ${response.status}`,
                 });
+                if (response.ok && !prepared.streaming) {
+                  await logResponseBody(debugContext, response, response.status);
+                }
                 if (!response.ok) {
                   await logResponseBody(debugContext, response, response.status);
                   
