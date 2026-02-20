@@ -227,7 +227,8 @@ function formatDebugLinesForThinking(lines: string[]): string {
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .slice(-50);
-  return `${DEBUG_MESSAGE_PREFIX}\n${cleaned.map((line) => `- ${line}`).join("\n")}`;
+  const prelude = `[ThinkingResolution] source=debug_tui lines=${cleaned.length}`;
+  return `${DEBUG_MESSAGE_PREFIX}\n- ${prelude}\n${cleaned.map((line) => `- ${line}`).join("\n")}`;
 }
 
 function injectDebugThinking(response: unknown, debugText: string): unknown {

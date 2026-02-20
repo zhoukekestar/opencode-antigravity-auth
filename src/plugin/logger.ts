@@ -2,9 +2,9 @@
  * Structured Logger for Antigravity Plugin
  *
  * Logging behavior:
- * - debug disabled → no logs anywhere
- * - debug enabled → log files only (via debug.ts logWriter)
- * - debug_tui enabled → log files + TUI log panel
+ * - debug controls file logs only (via debug.ts)
+ * - debug_tui controls TUI log panel only
+ * - either sink can be enabled independently
  * - OPENCODE_ANTIGRAVITY_CONSOLE_LOG=1 → console output (independent of debug flags)
  */
 
@@ -68,7 +68,7 @@ export function createLogger(module: string): Logger {
   const service = `antigravity.${module}`;
 
   const log = (level: LogLevel, message: string, extra?: Record<string, unknown>): void => {
-    // TUI logging: only when debug TUI is enabled
+    // TUI logging: controlled only by debug_tui policy
     if (isDebugTuiEnabled()) {
       const app = _client?.app;
       if (app && typeof app.log === "function") {

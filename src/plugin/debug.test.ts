@@ -1,69 +1,78 @@
-import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { DEFAULT_CONFIG } from "./config"
 
-vi.mock("./storage", () => ({
-  ensureGitignoreSync: vi.fn(),
+const { ensureGitignoreSyncMock } = vi.hoisted(() => ({
+  ensureGitignoreSyncMock: vi.fn(),
 }))
 
-function createTmpDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix))
-}
+vi.mock("./storage", () => ({
+  ensureGitignoreSync: ensureGitignoreSyncMock,
+}))
 
-beforeEach(() => {
-  vi.resetModules()
-  vi.stubEnv("OPENCODE_ANTIGRAVITY_DEBUG", "")
-  vi.stubEnv("OPENCODE_ANTIGRAVITY_DEBUG_TUI", "")
-})
+describe("debug sink policy", () => {
+  let originalDebugEnv: string | undefined
+  let originalDebugTuiEnv: string | undefined
 
-afterEach(() => {
-  vi.unstubAllEnvs()
-})
+  beforeEach(() => {
+    vi.resetModules()
+    originalDebugEnv = process.env.OPENCODE_ANTIGRAVITY_DEBUG
+    originalDebugTuiEnv = process.env.OPENCODE_ANTIGRAVITY_DEBUG_TUI
+    delete process.env.OPENCODE_ANTIGRAVITY_DEBUG
+    delete process.env.OPENCODE_ANTIGRAVITY_DEBUG_TUI
+    ensureGitignoreSyncMock.mockReset()
+  })
 
-describe("debug.ts baseline coupling", () => {
-  it("keeps TUI debug disabled when debug=false and debug_tui=true", async () => {
-    const configDir = createTmpDir("antigravity-debug-config-")
-    const logDir = createTmpDir("antigravity-debug-logs-")
-    vi.stubEnv("XDG_CONFIG_HOME", configDir)
+  afterEach(() => {
+    if (originalDebugEnv === undefined) {
+      delete process.env.OPENCODE_ANTIGRAVITY_DEBUG
+    } else {
+      process.env.OPENCODE_ANTIGRAVITY_DEBUG = originalDebugEnv
+    }
 
-    const { DEFAULT_CONFIG } = await import("./config")
+    if (originalDebugTuiEnv === undefined) {
+      delete process.env.OPENCODE_ANTIGRAVITY_DEBUG_TUI
+    } else {
+      process.env.OPENCODE_ANTIGRAVITY_DEBUG_TUI = originalDebugTuiEnv
+    }
+  })
+
+  it("keeps debug_tui independent from debug in config", async () => {
     const { initializeDebug, isDebugEnabled, isDebugTuiEnabled, getLogFilePath } = await import("./debug")
 
-    initializeDebug({ ...DEFAULT_CONFIG, debug: false, debug_tui: true, log_dir: logDir })
+    initializeDebug({
+      ...DEFAULT_CONFIG,
+      debug: false,
+      debug_tui: true,
+    })
 
     expect(isDebugEnabled()).toBe(false)
-    expect(isDebugTuiEnabled()).toBe(false)
+    expect(isDebugTuiEnabled()).toBe(true)
     expect(getLogFilePath()).toBeUndefined()
   })
 
-  it("enables file debug only when debug=true and debug_tui=false", async () => {
-    const configDir = createTmpDir("antigravity-debug-config-")
-    const logDir = createTmpDir("antigravity-debug-logs-")
-    vi.stubEnv("XDG_CONFIG_HOME", configDir)
+  it("keeps debug_tui independent from debug in env fallback", async () => {
+    process.env.OPENCODE_ANTIGRAVITY_DEBUG = "0"
+    process.env.OPENCODE_ANTIGRAVITY_DEBUG_TUI = "1"
 
-    const { DEFAULT_CONFIG } = await import("./config")
+    const { isDebugEnabled, isDebugTuiEnabled, getLogFilePath } = await import("./debug")
+
+    expect(isDebugEnabled()).toBe(false)
+    expect(isDebugTuiEnabled()).toBe(true)
+    expect(getLogFilePath()).toBeUndefined()
+  })
+
+  it("keeps file debug enabled without TUI when only debug is true", async () => {
     const { initializeDebug, isDebugEnabled, isDebugTuiEnabled, getLogFilePath } = await import("./debug")
 
-    initializeDebug({ ...DEFAULT_CONFIG, debug: true, debug_tui: false, log_dir: logDir })
+    initializeDebug({
+      ...DEFAULT_CONFIG,
+      debug: true,
+      debug_tui: false,
+      log_dir: "/tmp/opencode-antigravity-debug-tests",
+    })
 
     expect(isDebugEnabled()).toBe(true)
     expect(isDebugTuiEnabled()).toBe(false)
-    expect(getLogFilePath()).toBeTruthy()
-  })
-
-  it("enables both file and TUI debug when debug=true and debug_tui=true", async () => {
-    const configDir = createTmpDir("antigravity-debug-config-")
-    const logDir = createTmpDir("antigravity-debug-logs-")
-    vi.stubEnv("XDG_CONFIG_HOME", configDir)
-
-    const { DEFAULT_CONFIG } = await import("./config")
-    const { initializeDebug, isDebugEnabled, isDebugTuiEnabled, getLogFilePath } = await import("./debug")
-
-    initializeDebug({ ...DEFAULT_CONFIG, debug: true, debug_tui: true, log_dir: logDir })
-
-    expect(isDebugEnabled()).toBe(true)
-    expect(isDebugTuiEnabled()).toBe(true)
-    expect(getLogFilePath()).toBeTruthy()
+    expect(getLogFilePath()).toContain("antigravity-debug-")
   })
 })
