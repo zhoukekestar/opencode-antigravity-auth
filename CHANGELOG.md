@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.6.0] - 2026-02-20
+
+### Fixed
+
+- **#397** - Gemini tool-call payload handling now enforces valid `thought_signature` behavior for `functionCall` parts, preventing `400 INVALID_ARGUMENT` in mixed and parallel call turns.
+
+- **#454** - Request sanitization now removes empty/invalid `contents.parts` entries and invalid `systemInstruction.parts` before forwarding to Antigravity.
+
+- **#444** - Response transform fallback now uses cloned responses and preserves recovery signaling, eliminating `Body already used` failures.
+
+- **#368 (Tackled)** - Claude thinking/signature handling now replaces foreign signatures with sentinels and tightens thinking-order classification to reduce false-positive recovery triggers.
+
+### Changed
+
+- **Debug Sink Split** - `debug` now controls file logging only, while `debug_tui` independently controls TUI panel logging.
+
+- **Header Normalization** - `x-goog-user-project` is now stripped across Antigravity and Gemini CLI request styles.
+
+- **Claude Prompt Auto-Caching (Optional)** - Added `claude_prompt_auto_caching` to inject `cache_control: { type: "ephemeral" }` when Claude prompt caching is desired and unset.
+
+### Documentation
+
+- Updated README, architecture/config/troubleshooting docs, and generated schema docs to reflect new debug sink semantics and config keys.
+
+## [1.5.2] - 2026-02-18
+
+### Changed
+
+- Added support for Sonnet 4.6 and removed old models support.
+
 ## [1.5.1] - 2026-02-11
 
 ### Changed

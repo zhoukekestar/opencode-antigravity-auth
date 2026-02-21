@@ -96,6 +96,14 @@ export const AntigravityConfigSchema = z.object({
    * @default false
    */
   debug: z.boolean().default(false),
+
+  /**
+   * Show debug logs in the TUI log panel.
+   * Works independently from `debug` file logging.
+   * Env override: OPENCODE_ANTIGRAVITY_DEBUG_TUI=1
+   * @default false
+   */
+  debug_tui: z.boolean().default(false),
   
   /**
    * Custom directory for debug logs.
@@ -208,6 +216,13 @@ export const AntigravityConfigSchema = z.object({
    * @default true
    */
   claude_tool_hardening: z.boolean().default(true),
+
+  /**
+   * Enable Claude prompt auto-caching by adding top-level cache_control when absent.
+   *
+   * @default false
+   */
+  claude_prompt_auto_caching: z.boolean().default(false),
   
   // =========================================================================
   // Proactive Token Refresh (ported from LLM-API-Key-Proxy)
@@ -435,6 +450,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   quiet_mode: false,
   toast_scope: 'root_only',
   debug: false,
+  debug_tui: false,
   keep_thinking: false,
   session_recovery: true,
   auto_resume: true,
@@ -443,6 +459,7 @@ export const DEFAULT_CONFIG: AntigravityConfig = {
   empty_response_retry_delay_ms: 2000,
   tool_id_recovery: true,
   claude_tool_hardening: true,
+  claude_prompt_auto_caching: false,
   proactive_token_refresh: true,
   proactive_refresh_buffer_seconds: 1800,
   proactive_refresh_check_interval_seconds: 300,
