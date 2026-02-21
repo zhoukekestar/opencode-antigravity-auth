@@ -1228,7 +1228,7 @@ export const createAntigravityPlugin = (providerId: string) => async (
   initLogger(client);
   
   // Fetch latest Antigravity version from remote API (non-blocking, falls back to hardcoded)
-  await initAntigravityVersion();
+  // await initAntigravityVersion();
   
   // Initialize health tracker for hybrid strategy
   if (config.health_score) {
